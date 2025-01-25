@@ -1,5 +1,5 @@
-//go:build !windows
-// +build !windows
+//go:build windows
+// +build windows
 
 package collector
 
@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 const (
@@ -58,8 +57,6 @@ func (e CollectorBash) Run(ch chan<- prometheus.Metric) error {
 	var command string
 	var args []string
 	var cmd *exec.Cmd
-	var sysCred syscall.SysProcAttr
-	var useCred bool
 
 	os.Setenv("CREDENTIALS_NAME", e.metricsConfig.Credential.Name)
 	os.Setenv("CREDENTIALS_COLLECTOR", e.metricsConfig.Credential.Collector)
@@ -68,11 +65,7 @@ func (e CollectorBash) Run(ch chan<- prometheus.Metric) error {
 	os.Setenv("CREDENTIALS_URI", e.metricsConfig.Credential.Uri)
 
 	if e.metricsConfig.Credential.User != "" {
-		useCred = true
-		creduser := e.metricsConfig.CredentialUser()
-		sysCred = syscall.SysProcAttr{Credential: &syscall.Credential{Uid: creduser.UidInt(), Gid: creduser.GidInt()}}
-	} else {
-		useCred = false
+		log.Warnf("User credentials are not supported on Windows. Ignoring user: %s", e.metricsConfig.Credential.User)
 	}
 
 	regexCmd := regexp.MustCompile("'.+'|\".+\"|\\S+")
@@ -92,13 +85,10 @@ func (e CollectorBash) Run(ch chan<- prometheus.Metric) error {
 
 		log.Debugf("Running command \"%s\" with params \"%s\"...", command, args)
 
-		cmd = exec.Command(command, args...)
+		cmd = exec.Command("cmd", "/C", command)
+		cmd.Args = append(cmd.Args, args...)
 		cmd.Env = os.Environ()
 		cmd.Stdin = strings.NewReader(string(output))
-
-		if useCred {
-			cmd.SysProcAttr = &sysCred
-		}
 
 		output, err = cmd.CombinedOutput()
 

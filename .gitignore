@@ -13,3 +13,18 @@
 # Vendoring folder
 vendor/
 
+*.exe
+
+# Go build artifacts
+*.out
+*.test
+
+# Vim swap and backup files
+*.swp
+*~
+
+# macOS-specific files
+.DS_Store
+
+# Optional: Uncomment the following line if you do not want to commit go.mod.lock
+# go.mod.lock

@@ -3,6 +3,7 @@ package config
 import (
 	"io/ioutil"
 	"os/user"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -11,48 +12,24 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-/*
-Copyright 2017 Orange
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-// Metric name parts.
 const (
-	// Namespace for all metrics.
 	Namespace = "custom"
-	// Subsystem(s).
-	Exporter = "exporter"
+	Exporter  = "exporter"
 )
 
 type CredentialsItem struct {
 	Name      string `yaml:"name"`
 	Collector string `yaml:"type"`
-
-	User string `yaml:"user,omitempty"`
-	Dsn  string `yaml:"dsn,omitempty"`
-	Uri  string `yaml:"uri,omitempty"`
-	Path string `yaml:"path,omitempty"`
-
-	//@TODO add user to allow run command as this user... for shell need uid/gid
+	User      string `yaml:"user,omitempty"`
+	Dsn       string `yaml:"dsn,omitempty"`
+	Uri       string `yaml:"uri,omitempty"`
+	Path      string `yaml:"path,omitempty"`
 }
 
 type MetricsItem struct {
-	Name     string
-	Commands []string
-
+	Name       string
+	Commands   []string
 	Credential CredentialsItem
-
 	Mapping    []string
 	Separator  string
 	Value_name string
@@ -60,11 +37,9 @@ type MetricsItem struct {
 }
 
 type MetricsItemYaml struct {
-	Name     string   `yaml:"name"`
-	Commands []string `yaml:"commands"`
-
-	Credential string `yaml:"credential"`
-
+	Name       string   `yaml:"name"`
+	Commands   []string `yaml:"commands"`
+	Credential string   `yaml:"credential"`
 	Mapping    []string `yaml:"mapping"`
 	Separator  string   `yaml:"separator,omitempty"`
 	Value_name string   `yaml:"value_name,omitempty"`
@@ -85,15 +60,12 @@ type CredentialsUser struct {
 }
 
 func NewConfig(configFile string) (*Config, error) {
-	var contentFile []byte
-	var err error
-
-	if contentFile, err = ioutil.ReadFile(configFile); err != nil {
+	contentFile, err := ioutil.ReadFile(configFile)
+	if err != nil {
 		return nil, err
 	}
 
 	ymlCnf := ConfigYaml{}
-
 	if err = yaml.Unmarshal(contentFile, &ymlCnf); err != nil {
 		return nil, err
 	}
@@ -101,42 +73,38 @@ func NewConfig(configFile string) (*Config, error) {
 	myCnf := new(Config)
 	myCnf.metricsList(ymlCnf)
 
-	//log.Debugln("config loaded:\n", string(contentFile))
-
 	return myCnf, nil
 }
 
 func (c Config) credentialsList(yaml ConfigYaml) map[string]CredentialsItem {
-	var result = make(map[string]CredentialsItem)
-
+	result := make(map[string]CredentialsItem)
 	for _, v := range yaml.Credentials {
 		result[v.Name] = CredentialsItem{
 			Name:      v.Name,
 			Collector: v.Collector,
+			User:      v.User,
 			Dsn:       v.Dsn,
 			Path:      v.Path,
 			Uri:       v.Uri,
 		}
 	}
-
 	return result
 }
 
 func (e Config) ValueType(Value_type string) prometheus.ValueType {
-
 	switch Value_type {
 	case "COUNTER":
 		return prometheus.CounterValue
 	case "GAUGE":
 		return prometheus.GaugeValue
+	default:
+		return prometheus.UntypedValue
 	}
-
-	return prometheus.UntypedValue
 }
 
 func (c *Config) metricsList(yaml ConfigYaml) {
-	var result = make(map[string]MetricsItem)
-	var credentials = c.credentialsList(yaml)
+	result := make(map[string]MetricsItem)
+	credentials := c.credentialsList(yaml)
 
 	for _, v := range yaml.Metrics {
 		if cred, ok := credentials[v.Credential]; ok {
@@ -158,18 +126,19 @@ func (c *Config) metricsList(yaml ConfigYaml) {
 }
 
 func (m MetricsItem) SeparatorValue() string {
-	sep := m.Separator
-
-	if len(sep) < 1 {
-		sep = " "
+	if len(m.Separator) < 1 {
+		return " "
 	}
-
-	return sep
+	return m.Separator
 }
 
 func (m MetricsItem) CredentialUser() *CredentialsUser {
-	usr := strings.TrimSpace(m.Credential.User)
+	// On Windows, we don't support running as different users
+	if runtime.GOOS == "windows" {
+		return currentUser()
+	}
 
+	usr := strings.TrimSpace(m.Credential.User)
 	if len(usr) == 0 {
 		return currentUser()
 	}
@@ -186,17 +155,19 @@ func (m MetricsItem) CredentialUser() *CredentialsUser {
 }
 
 func currentUser() *CredentialsUser {
-	var myUser *user.User
-	var err error
-
-	if myUser, err = user.Current(); err != nil {
-		log.Fatalf("Error on retrieve current system user : %s", err.Error())
+	myUser, err := user.Current()
+	if err != nil {
+		log.Fatalf("Error retrieving current system user: %s", err.Error())
 	}
-
 	return &CredentialsUser{User: *myUser}
 }
 
 func (c CredentialsUser) UidInt() uint32 {
+	// On Windows, we don't use UIDs
+	if runtime.GOOS == "windows" {
+		return 0
+	}
+	
 	if uid, err := strconv.ParseUint(c.Uid, 10, 32); err == nil {
 		return uint32(uid)
 	}
@@ -204,6 +175,11 @@ func (c CredentialsUser) UidInt() uint32 {
 }
 
 func (c CredentialsUser) GidInt() uint32 {
+	// On Windows, we don't use GIDs
+	if runtime.GOOS == "windows" {
+		return 0
+	}
+	
 	if gid, err := strconv.ParseUint(c.Gid, 10, 32); err == nil {
 		return uint32(gid)
 	}

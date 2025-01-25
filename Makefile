@@ -11,84 +11,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-GO     ?= CGO_ENABLED=1 go
-GOPATH := $(firstword $(subst :, ,$(shell $(GO) env GOPATH)))
-SCPATH := $(GOPATH)/src/github.com/orange-cloudfoundry/custom_exporter
-LCPATH := $(shell pwd)
+# Basic settings
+GO = go
+BINARY_NAME = custom_exporter.exe
+CONFIG_FILE = example.yml
 
-PROMU       ?= $(GOPATH)/bin/promu
-STATICCHECK ?= $(GOPATH)/bin/staticcheck
-pkgs         = $(shell $(GO) list ./... )
+# Build flags
+BUILDFLAGS = -tags windows
+LDFLAGS = -s -w
 
-CUR_DIR                 ?= $(shell basename $(pwd))
-BIN_DIR                 ?= $(GOPATH)/bin
-SRC_DIR			?= $(GOPATH)/src
-PKG_DIR			?= $(GOPATH)/pkg
+# Environment variables
+export CGO_ENABLED=0
+export GOOS=windows
+export GOARCH=amd64
 
-PREFIX                  ?= $(shell pwd) 
+# Targets
+.PHONY: all clean format test vet build run
 
-DOCKER_IMAGE_NAME       ?= custom_exporter
-DOCKER_IMAGE_TAG        ?= $(subst /,-,$(shell git rev-parse --abbrev-ref HEAD))
-
-ifeq ($(OS),Windows_NT)
-    OS_detected := Windows
-else
-    OS_detected := $(shell uname -s)
-endif
-
-all: format vet test staticcheck build 
+all: format vet test build
 
 clean:
-	@echo ">> cleanning"
-	@$(GO) clean -x -r -testcache -modcache
+	@echo Cleaning...
+	@$(GO) clean
+	@if exist $(BINARY_NAME) del /f $(BINARY_NAME)
 
-pre-build:
-	@echo ">> get dependancies"
-	@$(GO) mod download
-	@$(GO) mod vendor
+format:
+	@echo Formatting code...
+	@$(GO) fmt ./...
 
-style: pre-build
-	@echo ">> checking code style"
-	@! gofmt -d $(shell find . -prune -o -name '*.go' -print) | grep '^'
+test:
+	@echo Running tests...
+	@$(GO) test $(BUILDFLAGS) ./...
 
-test: pre-build
-	@echo ">> running tests"
-	@$(GO) test -race -short $(pkgs)
+vet:
+	@echo Vetting code...
+	@$(GO) vet $(BUILDFLAGS) ./...
 
-format: pre-build
-	@echo ">> formatting code"
-	@$(GO) fmt $(pkgs)
+build:
+	@echo Building...
+	@$(GO) build -v $(BUILDFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)
 
-vet: pre-build
-	@echo ">> vetting code"
-	@$(GO) vet $(pkgs)
-
-staticcheck: $(STATICCHECK)
-	@echo ">> running staticcheck"
-	@$(STATICCHECK) $(pkgs)
-
-buildbin: $(PROMU)
-	@echo ">> building binaries"
-	@$(PROMU) build --prefix $(PREFIX)
-
-build: clean pre-build buildbin
-
-tarball: $(PROMU)
-	@echo ">> building release tarball"
-	@$(PROMU) tarball --prefix $(PREFIX)
-
-$(GOPATH)/bin/promu promu:
-	@GOOS= GOARCH= $(GO) get -u github.com/prometheus/promu
-
-$(GOPATH)/bin/staticcheck:
-	@GOOS= GOARCH= $(GO) get -u honnef.co/go/tools/cmd/staticcheck
-
-
-.PHONY: all style format build test vet tarball docker promu staticcheck clean
-
-# Declaring the binaries at their default locations as PHONY targets is a hack
-# to ensure the latest version is downloaded on every make execution.
-# If this is not desired, copy/symlink these binaries to a different path and
-# set the respective environment variables.
-.PHONY: $(GOPATH)/bin/promu $(GOPATH)/bin/staticcheck
-
+run: build
+	@echo Running with example config...
+	@.\$(BINARY_NAME) -collector.config $(CONFIG_FILE)
